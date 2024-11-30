@@ -119,7 +119,7 @@ with st.sidebar:
     st.title("📊 Option Pricing Models")
     st.write("`Created by:`")
     linkedin_url = "www.linkedin.com/in/hajeeong"
-    st.markdown(f'<a href="{linkedin_url}" target="_blank" style="text-decoration: none; color: inherit;"><img src="https://cdn-icons-png.flaticon.com/512/174/174857.png" width="25" height="25" style="vertical-align: middle; margin-right: 10px;">`Akshat Kulshreshtha`</a>', unsafe_allow_html=True)
+    st.markdown(f'<a href="{linkedin_url}" target="_blank" style="text-decoration: none; color: inherit;"><img src="https://cdn-icons-png.flaticon.com/512/174/174857.png" width="25" height="25" style="vertical-align: middle; margin-right: 10px;">`Ha Jeong`</a>', unsafe_allow_html=True)
 
     model = st.radio("Select Model", ["Black-Scholes", "Monte Carlo"])
     
