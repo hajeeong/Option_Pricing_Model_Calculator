@@ -3,98 +3,8 @@ import pandas as pd
 import numpy as np
 from scipy.stats import norm
 import plotly.graph_objects as go
-import plotly.express as px
 import matplotlib.pyplot as plt
 import seaborn as sns
-from functools import wraps
-from time import time
-
-# Import your model classes and functions
-from black_scholes import BlackScholes
-from monte_carlo import monte_carlo_option_pricing
-
-# Binomial Tree functions
-def american_fast_tree(K, T, S0, r, N, u, d, optType='P'):
-    dt = T/N
-    q = (np.exp(r*dt) - d)/(u-d)
-    disc = np.exp(-r*dt)
-
-    # initialise stock prices at maturity
-    S = S0 * d**(np.arange(N,-1,-1)) * u**(np.arange(0,N+1,1))
-
-    # option payoff
-    if optType == 'P':
-        C = np.maximum(0, K - S)
-    else:
-        C = np.maximum(0, S - K)
-
-    # backward recursion through the tree
-    for i in np.arange(N-1,-1,-1):
-        S = S0 * d**(np.arange(i,-1,-1)) * u**(np.arange(0,i+1,1))
-        C[:i+1] = disc * ( q*C[1:i+2] + (1-q)*C[0:i+1] )
-        C = C[:-1]
-        if optType == 'P':
-            C = np.maximum(C, K - S)
-        else:
-            C = np.maximum(C, S - K)
-
-    return C[0]
-
-def plot_binomial_tree_interactive(S0, u, d, N):
-    """Create an interactive plotly visualization of the binomial tree"""
-    # Calculate stock prices at each node
-    x_coords = []
-    y_coords = []
-    text = []
-    x_edges = []
-    y_edges = []
-    
-    for i in range(N+1):
-        for j in range(i+1):
-            price = S0 * (u**j) * (d**(i-j))
-            x_coords.append(i)
-            y_coords.append(price)
-            text.append(f'Step: {i}<br>Price: ${price:.2f}')
-            
-            # Add edges
-            if i < N:
-                # Up movement
-                x_edges.extend([i, i+1, None])
-                y_edges.extend([price, price*u, None])
-                # Down movement
-                x_edges.extend([i, i+1, None])
-                y_edges.extend([price, price*d, None])
-    
-    fig = go.Figure()
-    
-    # Add edges (lines)
-    fig.add_trace(go.Scatter(
-        x=x_edges,
-        y=y_edges,
-        mode='lines',
-        line=dict(color='lightgray', width=1),
-        hoverinfo='skip'
-    ))
-    
-    # Add nodes
-    fig.add_trace(go.Scatter(
-        x=x_coords,
-        y=y_coords,
-        mode='markers',
-        marker=dict(size=10, color='blue'),
-        text=text,
-        hoverinfo='text'
-    ))
-    
-    fig.update_layout(
-        title='Binomial Tree Structure',
-        xaxis_title='Time Step',
-        yaxis_title='Stock Price',
-        showlegend=False,
-        hovermode='closest'
-    )
-    
-    return fig
 
 # Page configuration
 st.set_page_config(
@@ -104,72 +14,196 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Sidebar inputs
+# Custom CSS
+st.markdown("""
+<style>
+.metric-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 12px;
+    width: auto;
+    margin: 0 auto;
+    border-radius: 10px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.metric-call {
+    background-color: #e6f3ff;
+    color: #0066cc;
+}
+
+.metric-put {
+    background-color: #fff0e6;
+    color: #cc6600;
+}
+
+.metric-value {
+    font-size: 1.8rem;
+    font-weight: bold;
+    margin: 0;
+}
+
+.metric-label {
+    font-size: 1.2rem;
+    margin-bottom: 4px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+class BlackScholes:
+    def __init__(
+        self,
+        time_to_maturity: float,
+        strike: float,
+        current_price: float,
+        volatility: float,
+        interest_rate: float,
+    ):
+        self.time_to_maturity = time_to_maturity
+        self.strike = strike
+        self.current_price = current_price
+        self.volatility = volatility
+        self.interest_rate = interest_rate
+
+    def calculate_prices(self):
+        d1 = (np.log(self.current_price / self.strike) + 
+              (self.interest_rate + 0.5 * self.volatility ** 2) * self.time_to_maturity) / (
+                  self.volatility * np.sqrt(self.time_to_maturity)
+              )
+        d2 = d1 - self.volatility * np.sqrt(self.time_to_maturity)
+
+        self.call_price = self.current_price * norm.cdf(d1) - (
+            self.strike * np.exp(-(self.interest_rate * self.time_to_maturity)) * norm.cdf(d2)
+        )
+        self.put_price = (
+            self.strike * np.exp(-(self.interest_rate * self.time_to_maturity)) * norm.cdf(-d2)
+        ) - self.current_price * norm.cdf(-d1)
+
+        # Greeks
+        self.call_delta = norm.cdf(d1)
+        self.put_delta = -norm.cdf(-d1)
+        self.gamma = norm.pdf(d1) / (self.current_price * self.volatility * np.sqrt(self.time_to_maturity))
+        self.vega = self.current_price * norm.pdf(d1) * np.sqrt(self.time_to_maturity)
+        self.call_theta = -(self.current_price * norm.pdf(d1) * self.volatility / (2 * np.sqrt(self.time_to_maturity))) - \
+                          self.interest_rate * self.strike * np.exp(-self.interest_rate * self.time_to_maturity) * norm.cdf(d2)
+        self.put_theta = -(self.current_price * norm.pdf(d1) * self.volatility / (2 * np.sqrt(self.time_to_maturity))) + \
+                         self.interest_rate * self.strike * np.exp(-self.interest_rate * self.time_to_maturity) * norm.cdf(-d2)
+        self.call_rho = self.strike * self.time_to_maturity * np.exp(-self.interest_rate * self.time_to_maturity) * norm.cdf(d2)
+        self.put_rho = -self.strike * self.time_to_maturity * np.exp(-self.interest_rate * self.time_to_maturity) * norm.cdf(-d2)
+
+        return self.call_price, self.put_price
+
+def plot_pnl_heatmap(bs_model, spot_range, vol_range, strike, option_type, purchase_price):
+    pnl = np.zeros((len(vol_range), len(spot_range)))
+    for i, vol in enumerate(vol_range):
+        for j, spot in enumerate(spot_range):
+            bs_model.current_price = spot
+            bs_model.volatility = vol
+            call_price, put_price = bs_model.calculate_prices()
+            if option_type == 'call':
+                pnl[i, j] = call_price - purchase_price
+            else:
+                pnl[i, j] = put_price - purchase_price
+    
+    fig, ax = plt.subplots(figsize=(10, 8))
+    sns.heatmap(pnl, xticklabels=spot_range.round(2), yticklabels=vol_range.round(2), 
+                cmap='RdYlGn', center=0, ax=ax)
+    ax.set_xlabel('Spot Price')
+    ax.set_ylabel('Volatility')
+    ax.set_title(f'{option_type.capitalize()} Option PnL')
+    return fig
+
+# Sidebar
 with st.sidebar:
     st.title("📊 Option Pricing Models")
     st.write("`Created by:`")
     linkedin_url = "https://www.linkedin.com/in/akshat-kulshreshtha-9314421a2/"
     st.markdown(f'<a href="{linkedin_url}" target="_blank" style="text-decoration: none; color: inherit;"><img src="https://cdn-icons-png.flaticon.com/512/174/174857.png" width="25" height="25" style="vertical-align: middle; margin-right: 10px;">`Akshat Kulshreshtha`</a>', unsafe_allow_html=True)
 
-    # Model selection (now defined in the sidebar)
-    model = st.radio("Select Model", ["Black-Scholes", "Monte Carlo", "Binomial Tree"])
-
-    # Common parameters
+    model = st.radio("Select Model", ["Black-Scholes", "Monte Carlo"])
+    
     current_price = st.number_input("Current Asset Price", value=100.00, min_value=0.01, step=0.01)
     strike = st.number_input("Strike Price", value=100.00, min_value=0.01, step=0.01)
-    time_to_maturity = st.number_input("Time to Maturity (Years)", value=1.0, min_value=0.01, step=0.01)
+    time_to_maturity = st.number_input("Time to Maturity (Years)", value=1.00, min_value=0.01, step=0.01)
     volatility = st.number_input("Volatility (σ)", value=0.20, min_value=0.01, step=0.01)
     interest_rate = st.number_input("Risk-Free Interest Rate", value=0.05, min_value=0.00, step=0.01)
+    
+    call_purchase_price = st.number_input("Call Purchase Price", value=0.02, min_value=0.00, step=0.01)
+    put_purchase_price = st.number_input("Put Purchase Price", value=0.02, min_value=0.00, step=0.01)
 
-    # Model-specific parameters
-    if model == "Monte Carlo":
-        num_simulations = st.number_input("Number of Simulations", value=1000, min_value=100, step=100)
-    elif model == "Binomial Tree":
-        steps = st.number_input("Number of Steps (N)", value=50, min_value=3, max_value=1000, step=1)
-        u_factor = st.number_input("Up Factor (u)", value=1.1, min_value=1.01, max_value=2.0, step=0.01)
-        d_factor = 1/u_factor
+    st.markdown("---")
+    st.subheader("Heatmap Parameters")
+    spot_min = st.number_input('Min Spot Price', min_value=0.01, value=80.00, step=0.01)
+    spot_max = st.number_input('Max Spot Price', min_value=0.01, value=120.00, step=0.01)
+    vol_min = st.slider('Min Volatility', min_value=0.01, max_value=1.0, value=0.10, step=0.01)
+    vol_max = st.slider('Max Volatility', min_value=0.01, max_value=1.0, value=0.30, step=0.01)
 
 # Main content
 st.title("Option Pricing Models")
 
-# Calculate option prices based on selected model
-if model == "Black-Scholes":
-    bs_model = BlackScholes(time_to_maturity, strike, current_price, volatility, interest_rate)
-    call_price, put_price = bs_model.calculate_prices()
-    
-elif model == "Monte Carlo":
-    call_price, _ = monte_carlo_option_pricing("Call", current_price, strike, volatility, interest_rate, time_to_maturity, num_simulations)
-    put_price, _ = monte_carlo_option_pricing("Put", current_price, strike, volatility, interest_rate, time_to_maturity, num_simulations)
-    
-else:  # Binomial Tree
-    call_price = american_fast_tree(strike, time_to_maturity, current_price, interest_rate, steps, u_factor, d_factor, optType='C')
-    put_price = american_fast_tree(strike, time_to_maturity, current_price, interest_rate, steps, u_factor, d_factor, optType='P')
-    
-    if st.checkbox("Show Binomial Tree Structure", value=False):
-        if steps > 20:
-            st.warning("Tree visualization is limited to 20 steps for clarity. Reducing steps to 20 for visualization only.")
-            viz_steps = 20
-        else:
-            viz_steps = steps
-        
-        fig = plot_binomial_tree_interactive(current_price, u_factor, d_factor, viz_steps)
-        st.plotly_chart(fig, use_container_width=True)
+# Input Parameters Display
+st.subheader("Input Parameters")
+input_data = pd.DataFrame({
+    'Current Asset Price': [current_price],
+    'Strike Price': [strike],
+    'Time to Maturity (Years)': [time_to_maturity],
+    'Volatility (σ)': [volatility],
+    'Risk-Free Interest Rate': [interest_rate],
+    'Call Purchase Price': [call_purchase_price],
+    'Put Purchase Price': [put_purchase_price]
+}).T
+st.table(input_data)
 
-# Display results
-st.subheader("Option Prices")
+# Calculate prices
+bs_model = BlackScholes(time_to_maturity, strike, current_price, volatility, interest_rate)
+call_price, put_price = bs_model.calculate_prices()
+
+# Display option values
 col1, col2 = st.columns(2)
-
 with col1:
-    st.metric("Call Option Price", f"${call_price:.2f}")
+    st.markdown(f"""
+        <div class="metric-container metric-call">
+            <div>
+                <div class="metric-label">CALL Value</div>
+                <div class="metric-value">${call_price:.2f}</div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
 
 with col2:
-    st.metric("Put Option Price", f"${put_price:.2f}")
+    st.markdown(f"""
+        <div class="metric-container metric-put">
+            <div>
+                <div class="metric-label">PUT Value</div>
+                <div class="metric-value">${put_price:.2f}</div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
 
-# Display input parameters
-st.subheader("Input Parameters")
-input_data = {
-    "Parameter": ["Current Price", "Strike Price", "Time to Maturity", "Volatility", "Interest Rate"],
-    "Value": [current_price, strike, time_to_maturity, volatility, interest_rate]
-}
-input_df = pd.DataFrame(input_data)
-st.table(input_df)
+# Display Greeks
+st.subheader("Option Greeks")
+greeks_data = pd.DataFrame({
+    'Greek': ['Delta', 'Gamma', 'Vega', 'Theta', 'Rho'],
+    'Call': [bs_model.call_delta, bs_model.gamma, bs_model.vega, bs_model.call_theta, bs_model.call_rho],
+    'Put': [bs_model.put_delta, bs_model.gamma, bs_model.vega, bs_model.put_theta, bs_model.put_rho]
+})
+st.table(greeks_data.set_index('Greek').style.format("{:.4f}"))
+
+# PnL Heatmaps
+st.title("Options PnL - Interactive Heatmap")
+st.info("Explore how option PnL changes with varying 'Spot Prices and Volatility' levels using interactive heatmap parameters, while maintaining a constant 'Strike Price'.")
+
+spot_range = np.linspace(spot_min, spot_max, 20)
+vol_range = np.linspace(vol_min, vol_max, 20)
+
+col1, col2 = st.columns(2)
+with col1:
+    st.subheader("Call Option PnL Heatmap")
+    fig_call = plot_pnl_heatmap(bs_model, spot_range, vol_range, strike, 'call', call_purchase_price)
+    st.pyplot(fig_call)
+
+with col2:
+    st.subheader("Put Option PnL Heatmap")
+    fig_put = plot_pnl_heatmap(bs_model, spot_range, vol_range, strike, 'put', put_purchase_price)
+    st.pyplot(fig_put)
